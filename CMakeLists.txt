@@ -11,6 +11,7 @@ add_executable(dms_app
     src/main.cpp
     src/camera/camera_capture.cpp
     src/pipeline/frame_pipeline.cpp  # Step 2: producer/consumer pipeline
+        src/dms/dms_processor.cpp     # Step 3: DMS inference + overlay
 )
 
 # ---- OpenCV --------------------------------------------------------
