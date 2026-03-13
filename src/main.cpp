@@ -1,25 +1,11 @@
 // =============================================================
 // main.cpp  -  DMS Euro NCAP 2026 PoC
-// Step 2: Multi-Threaded producer/consumer pipeline
+// Step 3: DMS HMI overlay integration
 // =============================================================
-//
-// THREADING MODEL (Windows-safe):
-//   producer thread  - cv::VideoCapture + ring buffer
-//   consumer thread  - ring buffer -> deposits frame into shared slot
-//   main thread      - picks up frame from shared slot, calls
-//                      cv::imshow + cv::waitKey  <-- MUST be main thread on Windows
-//
-// Key fix: cv::imshow/waitKey called ONLY from main thread.
-// DLL fix:  CMakeLists copies OpenCV DLLs next to EXE at build time.
-// =============================================================
-
-// --- Sanity check: if this printf never appears, the EXE crashes before main() ---
-// (indicates missing DLL; run 'where opencv_world*.dll' or check PATH)
 
 #include <cstdio>
 #include <cstdlib>
 
-// Windows-specific: print last error as string
 #ifdef _WIN32
 #include <windows.h>
 static void printLastError(const char* ctx) {
@@ -34,6 +20,7 @@ static void printLastError(const char*) {}
 #endif
 
 #include "pipeline/frame_pipeline.hpp"
+#include "dms/dms_processor.hpp"  // Step 3: DMS overlay
 
 #include <atomic>
 #include <chrono>
@@ -45,7 +32,6 @@ static void printLastError(const char*) {}
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 
-// ---- Shared frame slot (consumer thread writes, main thread reads) ----
 static std::mutex          g_frame_mutex;
 static cv::Mat             g_latest_frame;
 static std::atomic<bool>   g_frame_ready{false};
@@ -54,23 +40,19 @@ static std::atomic<bool>   g_quit{false};
 static void signalHandler(int) { g_quit.store(true); }
 
 int main() {
-    printf("[main] ===== DMS Euro NCAP 2026 - Step 2 starting =====\n");
+    printf("[main] ===== DMS Euro NCAP 2026 - Step 3 starting =====\n");
     fflush(stdout);
 
-    // Register signal handlers
     std::signal(SIGINT,  signalHandler);
     std::signal(SIGTERM, signalHandler);
-
     printf("[main] Signal handlers registered\n");
     fflush(stdout);
 
     constexpr int  kCamera  = 0;
-    constexpr char kWindow[] = "DMS Euro NCAP 2026 - Step 2";
+    constexpr char kWindow[] = "DMS Euro NCAP 2026 - Step 3";
 
-    // Create window on main thread (required on Windows)
     printf("[main] Creating OpenCV window...\n");
     fflush(stdout);
-
     try {
         cv::namedWindow(kWindow, cv::WINDOW_AUTOSIZE);
     } catch (const cv::Exception& e) {
@@ -82,18 +64,27 @@ int main() {
         fflush(stdout);
         return 1;
     }
-
     printf("[main] Window created OK\n");
     fflush(stdout);
 
-    // ---- Consumer callback: runs on consumer thread ------------------
-    // MUST NOT call cv::imshow here on Windows.
-    // Just deposit the frame into the shared slot.
+    // ---- Step 3: Instantiate DMS processor ----------------------
+    // Pass empty string to skip Haar cascade (overlay-only mode),
+    // OR pass path to haarcascade_frontalface_default.xml for face detection.
+    dms::DmsProcessor dmsProcessor("");  // stub mode for now
+
+    printf("[main] DMS processor ready\n");
+    fflush(stdout);
+
+    // ---- Consumer callback: deposit frame + run DMS inference ---
     auto onFrame = [&](cv::Mat& frame) -> bool {
         if (g_quit.load(std::memory_order_relaxed))
             return false;
 
-        // Deposit into shared slot for main thread to display
+        // Step 3: Run DMS inference on consumer thread
+        // (renderOverlay is called on main thread later)
+        dms::DmsResult result = dmsProcessor.process(frame);
+
+        // Deposit raw frame into shared slot for main thread to display
         {
             std::lock_guard<std::mutex> lk(g_frame_mutex);
             g_latest_frame = frame.clone();
@@ -102,7 +93,6 @@ int main() {
         return true;
     };
 
-    // ---- Start pipeline ---------------------------------------------
     printf("[main] Starting pipeline on camera index %d...\n", kCamera);
     fflush(stdout);
 
@@ -112,7 +102,7 @@ int main() {
     printf("[main] Pipeline started. Press q or ESC to quit.\n");
     fflush(stdout);
 
-    // ---- Main thread display loop (Windows: imshow MUST be here) ----
+    // ---- Main thread display loop -------------------------------
     while (!g_quit.load(std::memory_order_relaxed)) {
 
         if (g_frame_ready.exchange(false, std::memory_order_acquire)) {
@@ -122,6 +112,13 @@ int main() {
                 display = g_latest_frame.clone();
             }
             if (!display.empty()) {
+                // Step 3: Run DMS inference again for overlay
+                // (or store result from consumer thread — for PoC we re-run)
+                dms::DmsResult result = dmsProcessor.process(display);
+
+                // Step 3: Render HMI overlay
+                dms::DmsProcessor::renderOverlay(display, result);
+
                 try {
                     cv::imshow(kWindow, display);
                 } catch (const cv::Exception& e) {
@@ -131,7 +128,6 @@ int main() {
             }
         }
 
-        // waitKey pumps the Win32 message queue; 1 ms timeout
         const int key = cv::waitKey(1);
         if (key == 'q' || key == 'Q' || key == 27) {
             printf("[main] Exit key pressed.\n"); fflush(stdout);
@@ -140,7 +136,6 @@ int main() {
         }
     }
 
-    // ---- Shutdown ---------------------------------------------------
     printf("[main] Stopping pipeline...\n"); fflush(stdout);
     pipeline.stop();
     cv::destroyAllWindows();
