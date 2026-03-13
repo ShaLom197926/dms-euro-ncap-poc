@@ -6,32 +6,32 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# ---- Sources ------------------------------------------------
+# ---- Sources -------------------------------------------------------
 add_executable(dms_app
     src/main.cpp
     src/camera/camera_capture.cpp
     src/pipeline/frame_pipeline.cpp  # Step 2: producer/consumer pipeline
 )
 
-# ---- OpenCV -------------------------------------------------
+# ---- OpenCV --------------------------------------------------------
 find_package(OpenCV REQUIRED COMPONENTS core imgproc highgui videoio imgcodecs)
 
-# ---- Threads (std::thread needs this on Linux; no-op on MSVC) ---
+# ---- Threads (std::thread needs this on Linux; no-op on MSVC) ------
 find_package(Threads REQUIRED)
 
-# ---- Include directories ------------------------------------
+# ---- Include directories -------------------------------------------
 target_include_directories(dms_app PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     ${OpenCV_INCLUDE_DIRS}
 )
 
-# ---- Link libraries -----------------------------------------
+# ---- Link libraries ------------------------------------------------
 target_link_libraries(dms_app PRIVATE
     ${OpenCV_LIBS}
     Threads::Threads
 )
 
-# ---- MSVC-specific flags ------------------------------------
+# ---- MSVC-specific flags -------------------------------------------
 if(MSVC)
     target_compile_definitions(dms_app PRIVATE
         _CRT_SECURE_NO_WARNINGS
@@ -42,7 +42,58 @@ if(MSVC)
     target_compile_options(dms_app PRIVATE /W3 /WX- /wd4996 /wd4005)
 endif()
 
-# ---- Output to bin/ -----------------------------------------
+# ---- Output to bin/ ------------------------------------------------
 set_target_properties(dms_app PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ---- Windows: auto-copy OpenCV DLLs next to EXE after build --------
+# This ensures the EXE can find opencv_world*.dll without modifying PATH.
+if(WIN32)
+    # Collect all OpenCV DLL paths from imported targets
+    foreach(_comp ${OpenCV_LIBS})
+        if(TARGET ${_comp})
+            get_target_property(_imp ${_comp} IMPORTED_LOCATION_RELEASE)
+            if(_imp)
+                # Replace .lib with .dll (for MSVC import libs)
+                string(REPLACE ".lib" ".dll" _dll "${_imp}")
+                # Also handle the case where IMPORTED_LOCATION already is a dll
+                if(NOT _dll MATCHES "\\.dll$")
+                    set(_dll "")
+                endif()
+                if(_dll AND EXISTS "${_dll}")
+                    list(APPEND _opencv_dlls "${_dll}")
+                endif()
+            endif()
+        endif()
+    endforeach()
+
+    # Fallback: glob the OpenCV bin directory for all opencv_world*.dll
+    if(NOT _opencv_dlls)
+        get_filename_component(_ocv_lib_dir "${OpenCV_DIR}" ABSOLUTE)
+        # Common layout: OpenCVConfig.cmake is in <opencv_build>/  
+        # DLLs are in <opencv_build>/bin/ or x64/vc*/bin/
+        file(GLOB _opencv_dlls_glob
+            "${_ocv_lib_dir}/bin/*.dll"
+            "${_ocv_lib_dir}/x64/vc*/bin/*.dll"
+            "${_ocv_lib_dir}/../bin/*.dll"
+        )
+        list(APPEND _opencv_dlls ${_opencv_dlls_glob})
+    endif()
+
+    if(_opencv_dlls)
+        add_custom_command(TARGET dms_app POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "[cmake] Copying OpenCV DLLs to EXE directory..."
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${_opencv_dlls}
+                "$<TARGET_FILE_DIR:dms_app>"
+            COMMENT "Copying OpenCV runtime DLLs next to dms_app.exe"
+        )
+    else()
+        message(WARNING
+            "[DMS] Could not locate OpenCV DLLs for auto-copy.\n"
+            "      After building, manually copy opencv_world*.dll from\n"
+            "      D:/opencv/build/x64/vc16/bin/  next to dms_app.exe,\n"
+            "      or add that directory to your PATH before running.")
+    endif()
+endif()
