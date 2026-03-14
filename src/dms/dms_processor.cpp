@@ -46,3 +46,69 @@ DmsResult DmsProcessor::process(const cv::Mat& frame) {
 
     return result;
 }
+
+// ================================================================
+// renderOverlay() - static HMI overlay renderer
+// ================================================================
+void DmsProcessor::renderOverlay(cv::Mat& frame, const DmsResult& result) {
+    if (frame.empty()) return;
+
+    const int fontFace = cv::FONT_HERSHEY_SIMPLEX;
+    int y = 30;
+    const int lineHeight = 25;
+
+    // Gaze zone
+    {
+        std::string text = std::string("Gaze: ") + result.gazeZoneStr(result.gazeZone);
+        cv::Scalar color = (result.gazeZone == GazeZone::Forward) ?
+                          cv::Scalar(0, 255, 0) : cv::Scalar(255, 128, 0);
+        cv::putText(frame, text, cv::Point(10, y), fontFace, 0.6, color, 2);
+        y += lineHeight;
+    }
+
+    // Drowsiness
+    {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "Drowsiness: %s (%.2f)",
+                 result.drowsinessStr(result.drowsiness), result.perclos);
+        cv::Scalar color = (result.drowsiness >= DrowsinessLevel::Severe) ?
+                          cv::Scalar(0, 0, 255) : cv::Scalar(255, 255, 0);
+        cv::putText(frame, buf, cv::Point(10, y), fontFace, 0.6, color, 2);
+        y += lineHeight;
+    }
+
+    // Distraction
+    {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "Distraction: %s",
+                 result.distractionStr(result.distraction));
+        cv::Scalar color = (result.distraction >= DistractionLevel::Severe) ?
+                          cv::Scalar(0, 0, 255) : cv::Scalar(255, 255, 0);
+        cv::putText(frame, buf, cv::Point(10, y), fontFace, 0.6, color, 2);
+        y += lineHeight;
+    }
+
+    // Head pose
+    {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "Yaw: %.1f\xC2\xB0 Pitch: %.1f\xC2\xB0",
+                 result.headPose.yaw, result.headPose.pitch);
+        cv::putText(frame, buf, cv::Point(10, y), fontFace, 0.6, cv::Scalar(200, 200, 200), 2);
+        y += lineHeight;
+    }
+
+    // Warning indicator
+    if (result.requiresWarning()) {
+        cv::rectangle(frame, cv::Rect(frame.cols - 250, 10, 230, 80),
+                     cv::Scalar(0, 0, 255), 3);
+        cv::putText(frame, "!!! WARNING !!!", cv::Point(frame.cols - 240, 55),
+                   fontFace, 0.9, cv::Scalar(0, 0, 255), 2);
+    }
+
+    // Face detected indicator
+    if (result.faceDetected) {
+        cv::circle(frame, cv::Point(frame.cols - 30, 30), 10,
+                  cv::Scalar(0, 255, 0), -1);
+    }
+}
+
