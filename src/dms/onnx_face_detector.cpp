@@ -82,6 +82,11 @@ std::vector<FaceDetection> OnnxFaceDetector::detect(const cv::Mat& frame) {
                     // Convert to top-left to original image size
                     // YuNet outputs in CENTER format: [x_center, y_center, width, height]
                     // Convert to top-left corner format
+                                    
+                // DEBUG: Print raw YuNet output for first detection
+                if (i == 0) {
+                    printf("RAW data[0-3]: %.6f, %.6f, %.6f, %.6f\n", data[0], data[1], data[2], data[3]);
+                }
                 float x_center = data[0] * m_inputWidth;
                 float y_center = data[1] * m_inputHeight;
                 float width = data[2] * m_inputWidth;
