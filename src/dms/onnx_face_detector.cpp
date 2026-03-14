@@ -82,20 +82,17 @@ std::vector<FaceDetection> OnnxFaceDetector::detect(const cv::Mat& frame) {
                     // Convert to top-left to original image size
                     // YuNet outputs in CENTER format: [x_center, y_center, width, height]
                     // Convert to top-left corner format
-                    float x_center = data[0] / scaleX;
-                    float y_center = data[1] / scaleY;
-                    float width = data[2] / scaleX;
-                    float height = data[3] / scaleY;
-                    
+                float x_center = data[0] * m_inputWidth;
+                float y_center = data[1] * m_inputHeight;
+                float width = data[2] * m_inputWidth;
+                float height = data[3] * m_inputHeight;                    
                     // Convert from center to top-left corner
-                    float x = x_center - width / 2.0f;
-                    float y = y_center - height / 2.0f;
-                    // Clamp to image boundaries
-                    x = std::max(0.0f, std::min(x, static_cast<float>(frame.cols - 1)));
-                    y = std::max(0.0f, std::min(y, static_cast<float>(frame.rows - 1)));
-                    float w = std::min(width, static_cast<float>(frame.cols - x));
-                    float h = std::min(height, static_cast<float>(frame.rows - y));
-                    
+                float x = x_center - width / 2.0f;
+                float y = y_center - height / 2.0f;                    // Clamp to image boundaries
+                x = std::max(0.0f, x / scaleX);
+                y = std::max(0.0f, y / scaleY);
+                float w = std::min(width / scaleX, static_cast<float>(frame.cols - x));
+                float h = std::min(height / scaleY, static_cast<float>(frame.rows - y));                    
                     FaceDetection det;
                     det.bbox = cv::Rect(static_cast<int>(x), static_cast<int>(y),
                                        static_cast<int>(w), static_cast<int>(h));
