@@ -77,19 +77,21 @@ std::vector<FaceDetection> OnnxFaceDetector::detect(const cv::Mat& frame) {
                 
                 float confidence = data[4];
                 if (confidence > m_confThreshold) {
-                    // Get bbox (already in pixel coordinates)
-                    float x = data[0] / scaleX;
-                    float y = data[1] / scaleY;
-                    float w = data[2] / scaleX;
-                    float h = data[3] / scaleY;
-                    
+                                    // Get bbox in center format [x_center, y_center, width, height]
+                // Convert to top-left corner format and scale to original image size
+                float x_center = data[0] / scaleX;
+                float y_center = data[1] / scaleY;
+                float width = data[2] / scaleX;
+                float height = data[3] / scaleY;
+                
+                // Convert center to top-left corner
+                float x = x_center - width / 2.0f;
+                float y = y_center - height / 2.0f;
                     // Clamp to image boundaries
                     x = std::max(0.0f, std::min(x, static_cast<float>(frame.cols - 1)));
                     y = std::max(0.0f, std::min(y, static_cast<float>(frame.rows - 1)));
-                    w = std::min(w, static_cast<float>(frame.cols - x));
-                    h = std::min(h, static_cast<float>(frame.rows - y));
-                    
-                    FaceDetection det;
+                        w = std::min(width, static_cast<float>(frame.cols - x));
+                        h = std::min(height, static_cast<float>(frame.rows - y));
                     det.bbox = cv::Rect(static_cast<int>(x), static_cast<int>(y),
                                       static_cast<int>(w), static_cast<int>(h));
                     det.confidence = confidence;
