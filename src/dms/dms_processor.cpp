@@ -35,25 +35,33 @@ DmsResult DmsProcessor::process(const cv::Mat& frame) {
     result.timestamp = std::chrono::steady_clock::now();
     m_frameCount++;
 
+    bool shouldLog = (m_frameCount % 30 == 0);  // log once per second at 30fps
+
     // ---- ONNX face detection ----------
     if (m_faceDetector && !frame.empty()) {
         auto detections = m_faceDetector->detect(frame);
-                printf("[DmsProcessor::process] Detected %zu faces\n", detections.size());
-        fflush(stdout);
-                
+
+        if (shouldLog) {
+            printf("[DmsProcessor::process] frame=%llu detected=%zu\n",
+                   (unsigned long long)m_frameCount, detections.size());
+            fflush(stdout);
+        }
+
         if (!detections.empty()) {
-            // Use first detection (highest confidence)
             result.faceDetected = true;
-            
-            // Store bounding boxes for visualization in renderOverlay()
+
             for (const auto& det : detections) {
                 result.faceDetections.push_back(det.bbox);
-                                printf("[DmsProcessor::process] Bbox %zu: x=%d y=%d w=%d h=%d\n",
-                       result.faceDetections.size()-1, det.bbox.x, det.bbox.y, 
-                       det.bbox.width, det.bbox.height);
+            }
+
+            if (shouldLog) {
+                // Print only the best detection (index 0, highest confidence)
+                const auto& b = detections[0].bbox;
+                printf("[DmsProcessor::process] Best face: x=%d y=%d w=%d h=%d conf=%.2f\n",
+                       b.x, b.y, b.width, b.height, detections[0].confidence);
                 fflush(stdout);
             }
-            
+
             // Store face bounding box for head pose estimation
             const auto& face = detections[0].bbox;
             // TODO: Implement real head pose estimation using landmarks
