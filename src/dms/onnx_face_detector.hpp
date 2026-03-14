@@ -1,9 +1,9 @@
-// =============================================================
-// onnx_face_detector.hpp - YOLOv8 Face Detection with ONNX Runtime
-// =============================================================
 #pragma once
+// =============================================================
+// onnx_face_detector.hpp - YuNet Face Detection with OpenCV DNN
+// =============================================================
 #include <opencv2/core.hpp>
-#include <onnxruntime_cxx_api.h>
+#include <opencv2/dnn.hpp>
 #include <vector>
 #include <string>
 #include <memory>
@@ -13,7 +13,7 @@ namespace dms {
 struct FaceDetection {
     cv::Rect bbox;
     float confidence;
-    std::vector<cv::Point2f> landmarks; // 5 landmarks: left_eye, right_eye, nose, left_mouth, right_mouth
+    std::vector<cv::Point2f> landmarks;  // 5 landmarks: right_eye, left_eye, nose, right_mouth, left_mouth
 };
 
 class OnnxFaceDetector {
@@ -26,21 +26,15 @@ public:
     bool isInitialized() const { return m_initialized; }
 
 private:
-    void preprocess(const cv::Mat& frame, std::vector<float>& inputTensor, float& scaleX, float& scaleY);
-    std::vector<FaceDetection> postprocess(const std::vector<float>& output, const cv::Size& originalSize, float scaleX, float scaleY);
+    void preprocess(const cv::Mat& frame, cv::Mat& blob, float& scaleX, float& scaleY);
     float computeIoU(const cv::Rect& a, const cv::Rect& b);
     std::vector<int> nonMaximumSuppression(const std::vector<FaceDetection>& boxes);
 
-    std::unique_ptr<Ort::Env> m_env;
-    std::unique_ptr<Ort::Session> m_session;
-    Ort::SessionOptions m_sessionOptions;
-    
-    std::vector<const char*> m_inputNames;
-    std::vector<const char*> m_outputNames;
-    std::vector<int64_t> m_inputShape;
+    cv::dnn::Net m_net;
     
     int m_inputWidth = 640;
     int m_inputHeight = 640;
+    
     float m_confThreshold;
     float m_iouThreshold;
     bool m_initialized = false;
