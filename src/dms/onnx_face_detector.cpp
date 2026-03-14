@@ -78,14 +78,7 @@ std::vector<FaceDetection> OnnxFaceDetector::detect(const cv::Mat& frame) {
                 float confidence = data[4];
                 if (confidence > m_confThreshold) {
                                     // Get bbox in center format [x_center, y_center, width, height]
-                // Convert to top-left corner format and scale to original image size
-                float x_center = data[0] / scaleX;
-                float y_center = data[1] / scaleY;
-                float width = data[2] / scaleX;
-                float height = data[3] / scaleY;
-                
-                                        // YuNet outputs bbox in top-left format: [x, y, w, h] (already at input scale 640x640)
-                        // Scale back to original image size
+                // Convert to top-lek to original image size
                         float x = data[0] / scaleX;
                         float y = data[1] / scaleY;
                         float width = data[2] / scaleX;
@@ -101,10 +94,15 @@ std::vector<FaceDetection> OnnxFaceDetector::detect(const cv::Mat& frame) {
                         det.bbox = cv::Rect(static_cast<int>(x), static_cast<int>(y),
                                            static_cast<int>(w), static_cast<int>(h));
                         det.confidence = confidence;
-        float lx = data[5 + j * 2] / scaleX;
-                        float ly = data[6 + j * 2] / scaleY;
-                        det.landmarks.push_back(cv::Point2f(lx, ly));
-                    }
+        
+
+                        // Parse 5 landmarks (indices 5-14)
+                        for (int j = 0; j < 5; ++j) {
+                            float lx = data[5 + j * 2] / scaleX;
+                            float ly = data[6 + j * 2] / scaleY;
+                            det.landmarks.push_back(cv::Point2f(lx, ly));
+                        }
+            }
                     
                     detections.push_back(det);
                 }
