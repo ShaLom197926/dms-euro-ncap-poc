@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================
-// dms_processor.hpp  -  DMS Euro NCAP 2026 PoC
+// dms_processor.hpp - DMS Euro NCAP 2026 PoC
 // Step 3: Stub DMS inference engine + HMI overlay renderer
 // =============================================================
 // Architecture:
@@ -13,11 +13,12 @@
 //   - Simulates PERCLOS via a deterministic sine wave (for PoC demo)
 //   - All real inference slots marked TODO for Step 4 (ONNX model)
 // =============================================================
-
 #include "dms_types.hpp"
 #include <opencv2/core.hpp>
 #include <opencv2/objdetect.hpp>
 #include <string>
+#include <memory>
+#include "onnx_face_detector.hpp"  // Step 4: ONNX YOLOv8 face detector
 
 namespace dms {
 
@@ -38,20 +39,23 @@ public:
 
 private:
     cv::CascadeClassifier m_faceCascade;
-    bool                  m_hasCascade = false;
+    bool m_hasCascade = false;
+    
+    // Step 4: ONNX face detector
+    std::unique_ptr<OnnxFaceDetector> m_faceDetector;
 
     // Rolling frame counter for PERCLOS simulation
     uint64_t m_frameCount = 0;
 
     // Helpers
-    GazeZone  inferGazeZone(const cv::Rect& face, const cv::Size& frameSize) const;
-    float     simulatePerclos() const;
-    DrowsinessLevel  classifyDrowsiness(float perclos) const;
+    GazeZone inferGazeZone(const cv::Rect& face, const cv::Size& frameSize) const;
+    float simulatePerclos() const;
+    DrowsinessLevel classifyDrowsiness(float perclos) const;
     DistractionLevel classifyDistraction(GazeZone zone, float offRoadSec) const;
 
     // Cumulative off-road gaze timer
-    float m_offRoadGazeSec  = 0.f;
-    bool  m_wasOffRoad      = false;
+    float m_offRoadGazeSec = 0.f;
+    bool m_wasOffRoad = false;
     std::chrono::steady_clock::time_point m_offRoadStart;
 };
 
