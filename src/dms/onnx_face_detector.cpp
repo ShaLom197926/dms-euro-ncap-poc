@@ -67,7 +67,7 @@ std::vector<FaceDetection> OnnxFaceDetector::detect(const cv::Mat& frame) {
         cv::Mat output = m_net.forward();
         
         // Postprocess - YuNet output format: [1, N, 15]
-        // Each detection: [x, y, w, h, conf, 5 landmarks (x,y pairs)]
+        // Each detection: [x_center, y_center, w, h, conf, 5 landmarks (x,y pairs)]
         std::vector<FaceDetection> detections;
         
         if (output.dims == 3 && output.size[0] == 1) {
@@ -80,11 +80,16 @@ std::vector<FaceDetection> OnnxFaceDetector::detect(const cv::Mat& frame) {
                 if (confidence > m_confThreshold) {
                     // Get bbox in center format [x_center, y_center, width, height]
                     // Convert to top-left to original image size
-                    float x = data[0] / scaleX;
-                    float y = data[1] / scaleY;
+                    // YuNet outputs in CENTER format: [x_center, y_center, width, height]
+                    // Convert to top-left corner format
+                    float x_center = data[0] / scaleX;
+                    float y_center = data[1] / scaleY;
                     float width = data[2] / scaleX;
                     float height = data[3] / scaleY;
                     
+                    // Convert from center to top-left corner
+                    float x = x_center - width / 2.0f;
+                    float y = y_center - height / 2.0f;
                     // Clamp to image boundaries
                     x = std::max(0.0f, std::min(x, static_cast<float>(frame.cols - 1)));
                     y = std::max(0.0f, std::min(y, static_cast<float>(frame.rows - 1)));
