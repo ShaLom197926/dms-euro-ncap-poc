@@ -1,7 +1,8 @@
 // =============================================================
-// onnx_face_detector.cpp - YOLOv8 Face Detection Implementation
+// onnx_face_detector.cpp - YuNet Face Detection using OpenCV DNN
 // =============================================================
 #include "onnx_face_detector.hpp"
+#include <opencv2/dnn.hpp>
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
 #include <cmath>
@@ -13,92 +14,40 @@ OnnxFaceDetector::OnnxFaceDetector(const std::string& modelPath, float confThres
     : m_confThreshold(confThreshold), m_iouThreshold(iouThreshold) {
     
     try {
-        // Initialize ONNX Runtime environment
-        m_env = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "YOLOv8Face");
+        // Load YuNet model using OpenCV DNN (supports ONNX)
+        m_net = cv::dnn::readNetFromONNX(modelPath);
         
-        // Configure session options
-        m_sessionOptions.SetIntraOpNumThreads(4);
-        m_sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-        
-        // Create session
-        std::wstring wideModelPath(modelPath.begin(), modelPath.end());
-        m_session = std::make_unique<Ort::Session>(*m_env, wideModelPath.c_str(), m_sessionOptions);
-        
-        // Get input/output info
-        Ort::AllocatorWithDefaultOptions allocator;
-        
-        // Input info
-        size_t numInputNodes = m_session->GetInputCount();
-        if (numInputNodes > 0) {
-            auto inputName = m_session->GetInputNameAllocated(0, allocator);
-            m_inputNames.push_back(inputName.release());
-            
-            auto inputTypeInfo = m_session->GetInputTypeInfo(0);
-            auto tensorInfo = inputTypeInfo.GetTensorTypeAndShapeInfo();
-            m_inputShape = tensorInfo.GetShape();
-            
-            // YOLOv8 expects [1, 3, 640, 640]
-            if (m_inputShape.size() == 4) {
-                m_inputHeight = static_cast<int>(m_inputShape[2]);
-                m_inputWidth = static_cast<int>(m_inputShape[3]);
-            }
+        if (m_net.empty()) {
+            fprintf(stderr, "[OnnxFaceDetector] Failed to load model from: %s\n", modelPath.c_str());
+            m_initialized = false;
+            return;
         }
         
-        // Output info
-        size_t numOutputNodes = m_session->GetOutputCount();
-        if (numOutputNodes > 0) {
-            auto outputName = m_session->GetOutputNameAllocated(0, allocator);
-            m_outputNames.push_back(outputName.release());
-        }
+        // Set backend and target
+        m_net.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
+        m_net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
         
         m_initialized = true;
         printf("[OnnxFaceDetector] Initialized with model: %s (input: %dx%d)\n", 
-               modelPath.c_str(), m_inputWidth, m_inputHeight);
+            modelPath.c_str(), m_inputWidth, m_inputHeight);
         
-    } catch (const Ort::Exception& e) {
-        fprintf(stderr, "[OnnxFaceDetector] ONNX Runtime error: %s\n", e.what());
+    } catch (const cv::Exception& e) {
+        fprintf(stderr, "[OnnxFaceDetector] OpenCV DNN error: %s\n", e.what());
         m_initialized = false;
     }
 }
 
-void OnnxFaceDetector::preprocess(const cv::Mat& frame, std::vector<float>& inputTensor, float& scaleX, float& scaleY) {
-    // Resize and pad to maintain aspect ratio
+void OnnxFaceDetector::preprocess(const cv::Mat& frame, cv::Mat& blob, float& scaleX, float& scaleY) {
+    // Resize to input size
     cv::Mat resized;
     scaleX = static_cast<float>(m_inputWidth) / frame.cols;
     scaleY = static_cast<float>(m_inputHeight) / frame.rows;
-    float scale = std::min(scaleX, scaleY);
     
-    int newWidth = static_cast<int>(frame.cols * scale);
-    int newHeight = static_cast<int>(frame.rows * scale);
+    cv::resize(frame, resized, cv::Size(m_inputWidth, m_inputHeight));
     
-    cv::resize(frame, resized, cv::Size(newWidth, newHeight));
-    
-    // Create padded image
-    cv::Mat padded = cv::Mat::zeros(m_inputHeight, m_inputWidth, CV_8UC3);
-    resized.copyTo(padded(cv::Rect(0, 0, newWidth, newHeight)));
-    
-    // Convert to RGB and normalize
-    cv::Mat rgb;
-    cv::cvtColor(padded, rgb, cv::COLOR_BGR2RGB);
-    
-    // Convert to float and normalize to [0, 1]
-    rgb.convertTo(rgb, CV_32FC3, 1.0 / 255.0);
-    
-    // HWC to CHW format
-    inputTensor.resize(1 * 3 * m_inputHeight * m_inputWidth);
-    std::vector<cv::Mat> channels(3);
-    cv::split(rgb, channels);
-    
-    size_t channelSize = m_inputHeight * m_inputWidth;
-    for (int c = 0; c < 3; ++c) {
-        std::memcpy(inputTensor.data() + c * channelSize, 
-                    channels[c].data, 
-                    channelSize * sizeof(float));
-    }
-    
-    // Store actual scales used
-    scaleX = scale;
-    scaleY = scale;
+    // Convert to blob (NCHW format, RGB, normalized to [0,1])
+    cv::dnn::blobFromImage(resized, blob, 1.0 / 255.0, cv::Size(m_inputWidth, m_inputHeight),
+                          cv::Scalar(0, 0, 0), true, false, CV_32F);
 }
 
 std::vector<FaceDetection> OnnxFaceDetector::detect(const cv::Mat& frame) {
@@ -108,97 +57,68 @@ std::vector<FaceDetection> OnnxFaceDetector::detect(const cv::Mat& frame) {
     
     try {
         // Preprocess
-        std::vector<float> inputTensor;
+        cv::Mat blob;
         float scaleX, scaleY;
-        preprocess(frame, inputTensor, scaleX, scaleY);
+        preprocess(frame, blob, scaleX, scaleY);
         
-        // Create input tensor
-        std::vector<int64_t> inputShape = {1, 3, m_inputHeight, m_inputWidth};
-        auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-        Ort::Value inputTensorOrt = Ort::Value::CreateTensor<float>(
-            memoryInfo, inputTensor.data(), inputTensor.size(),
-            inputShape.data(), inputShape.size());
+        // Forward pass
+        m_net.setInput(blob);
+        cv::Mat output = m_net.forward();
         
-        // Run inference
-        auto outputTensors = m_session->Run(
-            Ort::RunOptions{nullptr},
-            m_inputNames.data(), &inputTensorOrt, 1,
-            m_outputNames.data(), 1);
+        // Postprocess - YuNet output format: [1, N, 15]
+        // Each detection: [x, y, w, h, conf, 5 landmarks (x,y pairs)]
+        std::vector<FaceDetection> detections;
         
-        // Get output tensor
-        float* outputData = outputTensors[0].GetTensorMutableData<float>();
-        auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
-        
-        // Copy output data
-        size_t outputSize = 1;
-        for (auto dim : outputShape) {
-            outputSize *= dim;
+        if (output.dims == 3 && output.size[0] == 1) {
+            int numDetections = output.size[1];
+            
+            for (int i = 0; i < numDetections; ++i) {
+                float* data = output.ptr<float>(0, i);
+                
+                float confidence = data[4];
+                if (confidence > m_confThreshold) {
+                    // Get bbox (already in pixel coordinates)
+                    float x = data[0] / scaleX;
+                    float y = data[1] / scaleY;
+                    float w = data[2] / scaleX;
+                    float h = data[3] / scaleY;
+                    
+                    // Clamp to image boundaries
+                    x = std::max(0.0f, std::min(x, static_cast<float>(frame.cols - 1)));
+                    y = std::max(0.0f, std::min(y, static_cast<float>(frame.rows - 1)));
+                    w = std::min(w, static_cast<float>(frame.cols - x));
+                    h = std::min(h, static_cast<float>(frame.rows - y));
+                    
+                    FaceDetection det;
+                    det.bbox = cv::Rect(static_cast<int>(x), static_cast<int>(y),
+                                      static_cast<int>(w), static_cast<int>(h));
+                    det.confidence = confidence;
+                    
+                    // Extract 5 landmarks (right eye, left eye, nose, right mouth, left mouth)
+                    for (int j = 0; j < 5; ++j) {
+                        float lx = data[5 + j * 2] / scaleX;
+                        float ly = data[6 + j * 2] / scaleY;
+                        det.landmarks.push_back(cv::Point2f(lx, ly));
+                    }
+                    
+                    detections.push_back(det);
+                }
+            }
         }
-        std::vector<float> output(outputData, outputData + outputSize);
         
-        // Postprocess
-        return postprocess(output, frame.size(), scaleX, scaleY);
+        // Apply NMS
+        auto indices = nonMaximumSuppression(detections);
+        std::vector<FaceDetection> result;
+        for (int idx : indices) {
+            result.push_back(detections[idx]);
+        }
         
-    } catch (const Ort::Exception& e) {
+        return result;
+        
+    } catch (const cv::Exception& e) {
         fprintf(stderr, "[OnnxFaceDetector] Inference error: %s\n", e.what());
         return {};
     }
-}
-
-std::vector<FaceDetection> OnnxFaceDetector::postprocess(
-    const std::vector<float>& output, const cv::Size& originalSize, float scaleX, float scaleY) {
-    
-    // YOLOv8 output format: [1, 20, 8400]
-    // 20 channels: 4 (bbox) + 1 (confidence) + 15 (5 landmarks * 3)
-    std::vector<FaceDetection> detections;
-    
-    const int numDetections = 8400;
-    const int numChannels = 20;
-    
-    for (int i = 0; i < numDetections; ++i) {
-        // Get confidence
-        float confidence = output[4 * numDetections + i];
-        
-        if (confidence > m_confThreshold) {
-            // Get bbox (center_x, center_y, width, height)
-            float cx = output[0 * numDetections + i] / scaleX;
-            float cy = output[1 * numDetections + i] / scaleY;
-            float w = output[2 * numDetections + i] / scaleX;
-            float h = output[3 * numDetections + i] / scaleY;
-            
-            // Convert to (x, y, width, height)
-            int x = static_cast<int>(cx - w / 2);
-            int y = static_cast<int>(cy - h / 2);
-            
-            // Clamp to image boundaries
-            x = std::max(0, std::min(x, originalSize.width - 1));
-            y = std::max(0, std::min(y, originalSize.height - 1));
-            int width = std::min(static_cast<int>(w), originalSize.width - x);
-            int height = std::min(static_cast<int>(h), originalSize.height - y);
-            
-            FaceDetection det;
-            det.bbox = cv::Rect(x, y, width, height);
-            det.confidence = confidence;
-            
-            // Extract landmarks (5 points: left_eye, right_eye, nose, left_mouth, right_mouth)
-            for (int j = 0; j < 5; ++j) {
-                float lx = output[(5 + j * 3) * numDetections + i] / scaleX;
-                float ly = output[(6 + j * 3) * numDetections + i] / scaleY;
-                det.landmarks.push_back(cv::Point2f(lx, ly));
-            }
-            
-            detections.push_back(det);
-        }
-    }
-    
-    // Apply NMS
-    auto indices = nonMaximumSuppression(detections);
-    std::vector<FaceDetection> result;
-    for (int idx : indices) {
-        result.push_back(detections[idx]);
-    }
-    
-    return result;
 }
 
 float OnnxFaceDetector::computeIoU(const cv::Rect& a, const cv::Rect& b) {
@@ -217,7 +137,7 @@ std::vector<int> OnnxFaceDetector::nonMaximumSuppression(const std::vector<FaceD
     
     // Sort by confidence
     std::sort(scoreIndex.begin(), scoreIndex.end(), 
-              [](const auto& a, const auto& b) { return a.first > b.first; });
+        [](const auto& a, const auto& b) { return a.first > b.first; });
     
     std::vector<bool> suppressed(boxes.size(), false);
     
