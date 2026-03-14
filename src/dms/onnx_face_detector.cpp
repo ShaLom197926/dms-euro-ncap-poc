@@ -90,8 +90,10 @@ std::vector<FaceDetection> OnnxFaceDetector::detect(const cv::Mat& frame) {
                     // Clamp to image boundaries
                     x = std::max(0.0f, std::min(x, static_cast<float>(frame.cols - 1)));
                     y = std::max(0.0f, std::min(y, static_cast<float>(frame.rows - 1)));
+                                            float w, h;
                         w = std::min(width, static_cast<float>(frame.cols - x));
                         h = std::min(height, static_cast<float>(frame.rows - y));
+                                            FaceDetection det;
                     det.bbox = cv::Rect(static_cast<int>(x), static_cast<int>(y),
                                       static_cast<int>(w), static_cast<int>(h));
                     det.confidence = confidence;
