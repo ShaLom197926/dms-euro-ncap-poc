@@ -38,6 +38,8 @@ DmsResult DmsProcessor::process(const cv::Mat& frame) {
     // ---- ONNX face detection ----------
     if (m_faceDetector && !frame.empty()) {
         auto detections = m_faceDetector->detect(frame);
+                printf("[DmsProcessor::process] Detected %zu faces\n", detections.size());
+        fflush(stdout);
                 
         if (!detections.empty()) {
             // Use first detection (highest confidence)
@@ -46,6 +48,10 @@ DmsResult DmsProcessor::process(const cv::Mat& frame) {
             // Store bounding boxes for visualization in renderOverlay()
             for (const auto& det : detections) {
                 result.faceDetections.push_back(det.bbox);
+                                printf("[DmsProcessor::process] Bbox %zu: x=%d y=%d w=%d h=%d\n",
+                       result.faceDetections.size()-1, det.bbox.x, det.bbox.y, 
+                       det.bbox.width, det.bbox.height);
+                fflush(stdout);
             }
             
             // Store face bounding box for head pose estimation
@@ -69,8 +75,14 @@ void DmsProcessor::renderOverlay(cv::Mat& frame, const DmsResult& result) {
     const int lineHeight = 25;
     
     // Draw face detection bounding boxes
+    
+    // Log face detection rendering
+    printf("[DmsProcessor::renderOverlay] Drawing %zu face bounding boxes\n", result.faceDetections.size());
+    fflush(stdout);
     for (const auto& bbox : result.faceDetections) {
         cv::rectangle(frame, bbox, cv::Scalar(0, 255, 0), 2);
+                printf("[DmsProcessor::renderOverlay] Drew bbox: x=%d y=%d w=%d h=%d\n",
+               bbox.x, bbox.y, bbox.width, bbox.height);
     }
 
     // Gaze zone
