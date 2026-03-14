@@ -1,35 +1,31 @@
 #pragma once
 // =============================================================
 // dms_processor.hpp - DMS Euro NCAP 2026 PoC
-// Step 3: Stub DMS inference engine + HMI overlay renderer
+// Phase 2: ONNX model integration with YuNet face detector
 // =============================================================
 // Architecture:
-//   process(frame) -> runs stub inference, returns DmsResult
-//   renderOverlay(frame, result) -> draws HMI on top of frame
+//  process(frame) -> runs DMS inference, returns DmsResult
+//  renderOverlay(frame, result) -> draws HMI on top of frame
 //
-// Stub strategy (no ML model yet):
-//   - Uses OpenCV Haar cascade for face detection
-//   - Derives head-pose proxy from face bounding box position
-//   - Simulates PERCLOS via a deterministic sine wave (for PoC demo)
-//   - All real inference slots marked TODO for Step 4 (ONNX model)
+// Uses ONNX YOLOv8 face detector for real-time face detection
 // =============================================================
 #include "dms_types.hpp"
 #include <opencv2/core.hpp>
 #include <opencv2/objdetect.hpp>
 #include <string>
 #include <memory>
-#include "onnx_face_detector.hpp"  // Step 4: ONNX YOLOv8 face detector
+#include "onnx_face_detector.hpp"  // ONNX YOLOv8 face detector
 
 namespace dms {
 
 class DmsProcessor {
 public:
-    // cascade_path: path to haarcascade_frontalface_default.xml
+    // model_path: path to ONNX face detection model
     // Pass empty string to skip face detection (overlay-only mode)
-    explicit DmsProcessor(const std::string& cascade_path = "");
+    explicit DmsProcessor(const std::string& model_path = "");
     ~DmsProcessor() = default;
 
-    // Run stub inference on a single BGR frame.
+    // Run DMS inference on a single BGR frame.
     // Thread-safe: may be called from any thread.
     DmsResult process(const cv::Mat& frame);
 
@@ -38,10 +34,7 @@ public:
     static void renderOverlay(cv::Mat& frame, const DmsResult& result);
 
 private:
-    cv::CascadeClassifier m_faceCascade;
-    bool m_hasCascade = false;
-    
-    // Step 4: ONNX face detector
+    // ONNX face detector
     std::unique_ptr<OnnxFaceDetector> m_faceDetector;
 
     // Rolling frame counter for PERCLOS simulation
