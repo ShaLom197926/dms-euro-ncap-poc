@@ -6,6 +6,8 @@
 
 #include <string>
 #include <chrono>
+#include <vector>
+#include <opencv2/core.hpp>
 
 namespace dms {
 
@@ -59,6 +61,7 @@ struct DmsResult {
 
     // Face detected this frame?
     bool            faceDetected    = false;
+    std::vector<cv::Rect> faceDetections;  // Face bounding boxes for visualization
 
     // Timestamp of this result
     std::chrono::steady_clock::time_point timestamp;
