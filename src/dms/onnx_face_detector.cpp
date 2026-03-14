@@ -55,74 +55,102 @@ std::vector<FaceDetection> OnnxFaceDetector::detect(const cv::Mat& frame) {
     if (!m_initialized || frame.empty()) {
         return {};
     }
-    
+
     try {
         // Preprocess
         cv::Mat blob;
         float scaleX, scaleY;
         preprocess(frame, blob, scaleX, scaleY);
-        
+
         // Forward pass
         m_net.setInput(blob);
         cv::Mat output = m_net.forward();
-        
-        // Postprocess - YuNet output format: [1, N, 15]
-        // Each detection: [x_center, y_center, w, h, conf, 5 landmarks (x,y pairs)]
+
+        // YuNet output format: [1, N, 15]
+        // Each row: [x1, y1, w, h, lm0x, lm0y, lm1x, lm1y, lm2x, lm2y,
+        //            lm3x, lm3y, lm4x, lm4y, confidence]
+        // x1,y1,w,h are already PIXEL coords in 640x640 input space — NOT normalized
+        // confidence is at index 14 (last)
+
         std::vector<FaceDetection> detections;
-        
+
         if (output.dims == 3 && output.size[0] == 1) {
             int numDetections = output.size[1];
-            
+
+            // Log once every 30 frames
+            static int frameCount = 0;
+            bool shouldLog = (++frameCount % 30 == 0);
+
+            if (shouldLog) {
+                printf("[OnnxFaceDetector] Raw candidates: %d\n", numDetections);
+            }
+
             for (int i = 0; i < numDetections; ++i) {
                 float* data = output.ptr<float>(0, i);
-                
-                float confidence = data[4];
-                if (confidence > m_confThreshold) {
-                    // Get bbox in center format [x_center, y_center, width, height]
-                    // Convert to top-left to original image size
-                    // YuNet outputs in CENTER format: [x_center, y_center, width, height]
-                    // Convert to top-left corner format
-                                    
-                // DEBUG: Print raw YuNet output for first detection
-                if (i == 0) {
-                    printf("RAW data[0-3]: %.6f, %.6f, %.6f, %.6f\n", data[0], data[1], data[2], data[3]);
+
+                // Index 14 = confidence
+                float confidence = data[14];
+                if (confidence < m_confThreshold) continue;
+
+                // Coords are pixel-space in 640x640 input image — scale back to frame
+                float x1 = data[0] / scaleX;
+                float y1 = data[1] / scaleY;
+                float w  = data[2] / scaleX;
+                float h  = data[3] / scaleY;
+
+                // Clamp to frame boundaries
+                x1 = std::max(0.0f, x1);
+                y1 = std::max(0.0f, y1);
+                w  = std::min(w, static_cast<float>(frame.cols) - x1);
+                h  = std::min(h, static_cast<float>(frame.rows) - y1);
+
+                if (w <= 0 || h <= 0) continue;  // skip degenerate boxes
+
+                FaceDetection det;
+                det.bbox       = cv::Rect(static_cast<int>(x1), static_cast<int>(y1),
+                                          static_cast<int>(w),  static_cast<int>(h));
+                det.confidence = confidence;
+
+                // Parse 5 landmarks (indices 4–13, pairs of x,y)
+                for (int j = 0; j < 5; ++j) {
+                    float lx = data[4 + j * 2] / scaleX;
+                    float ly = data[5 + j * 2] / scaleY;
+                    det.landmarks.push_back(cv::Point2f(lx, ly));
                 }
-                float x_center = data[0] * m_inputWidth;
-                float y_center = data[1] * m_inputHeight;
-                float width = data[2] * m_inputWidth;
-                float height = data[3] * m_inputHeight;                    
-                    // Convert from center to top-left corner
-                float x = x_center - width / 2.0f;
-                float y = y_center - height / 2.0f;                    // Clamp to image boundaries
-                x = std::max(0.0f, x / scaleX);
-                y = std::max(0.0f, y / scaleY);
-                float w = std::min(width / scaleX, static_cast<float>(frame.cols - x));
-                float h = std::min(height / scaleY, static_cast<float>(frame.rows - y));                    
-                    FaceDetection det;
-                    det.bbox = cv::Rect(static_cast<int>(x), static_cast<int>(y),
-                                       static_cast<int>(w), static_cast<int>(h));
-                    det.confidence = confidence;
-                    
-                    // Parse 5 landmarks (indices 5-14)
-                    for (int j = 0; j < 5; ++j) {
-                        float lx = data[5 + j * 2] / scaleX;
-                        float ly = data[6 + j * 2] / scaleY;
-                        det.landmarks.push_back(cv::Point2f(lx, ly));
-                    }
-                    
-                    detections.push_back(det);
-                }
+
+                detections.push_back(det);
+            }
+
+            if (shouldLog) {
+                printf("[OnnxFaceDetector] After threshold: %zu detections\n", detections.size());
             }
         }
-        
+
         // Apply NMS
         auto indices = nonMaximumSuppression(detections);
         std::vector<FaceDetection> result;
+        result.reserve(indices.size());
         for (int idx : indices) {
             result.push_back(detections[idx]);
         }
+
+        // Log final result once per 30 frames
+        {
+            static int logCount = 0;
+            if (++logCount % 30 == 0 && !result.empty()) {
+                printf("[OnnxFaceDetector] Final faces after NMS: %zu\n", result.size());
+                for (size_t i = 0; i < result.size() && i < 3; ++i) {
+                    printf("  Face %zu: x=%d y=%d w=%d h=%d conf=%.2f\n",
+                           i,
+                           result[i].bbox.x, result[i].bbox.y,
+                           result[i].bbox.width, result[i].bbox.height,
+                           result[i].confidence);
+                }
+            }
+        }
+
         return result;
-        
+
     } catch (const cv::Exception& e) {
         fprintf(stderr, "[OnnxFaceDetector] Inference error: %s\n", e.what());
         return {};
