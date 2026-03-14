@@ -38,6 +38,16 @@ DmsResult DmsProcessor::process(const cv::Mat& frame) {
     // ---- ONNX face detection ----------
     if (m_faceDetector && !frame.empty()) {
         auto detections = m_faceDetector->detect(frame);
+                
+        // Draw face bounding boxes
+        for (const auto& det : detections) {
+            cv::rectangle(frame, det.bbox, cv::Scalar(0, 255, 0), 2);
+            // Draw confidence score
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%.2f", det.confidence);
+            cv::putText(frame, buf, cv::Point(det.bbox.x, det.bbox.y - 5),
+                       cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);
+        }
         if (!detections.empty()) {
             // Use first detection (highest confidence)
             result.faceDetected = true;
