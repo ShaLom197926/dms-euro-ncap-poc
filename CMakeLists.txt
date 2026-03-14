@@ -11,7 +11,8 @@ add_executable(dms_app
     src/main.cpp
     src/camera/camera_capture.cpp
     src/pipeline/frame_pipeline.cpp  # Step 2: producer/consumer pipeline
-        src/dms/dms_processor.cpp     # Step 3: DMS inference + overlay
+    src/dms/dms_processor.cpp        # Step 3: DMS inference + overlay
+    src/dms/onnx_face_detector.cpp   # Step 4: ONNX YOLOv8 face detector
 )
 
 # ---- OpenCV --------------------------------------------------------
@@ -24,10 +25,11 @@ set(ONNXRUNTIME_LIB_DIR "${ONNXRUNTIME_ROOT}/lib")
 set(ONNXRUNTIME_BIN_DIR "${ONNXRUNTIME_ROOT}/bin")
 
 if(NOT EXISTS "${ONNXRUNTIME_INCLUDE_DIRS}/onnxruntime_cxx_api.h")
-    message(WARNING 
+    message(WARNING
         "[DMS] ONNX Runtime not found at ${ONNXRUNTIME_ROOT}\n"
         "      Download from: https://github.com/microsoft/onnxruntime/releases\n"
-        "      Extract to D:/onnxruntime-win-x64-1.24.2/")
+        "      Extract to D:/onnxruntime-win-x64-1.24.2/"
+)
 endif()
 
 include_directories(${ONNXRUNTIME_INCLUDE_DIRS})
@@ -39,14 +41,14 @@ find_package(Threads REQUIRED)
 target_include_directories(dms_app PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     ${OpenCV_INCLUDE_DIRS}
-        ${ONNXRUNTIME_INCLUDE_DIRS}
+    ${ONNXRUNTIME_INCLUDE_DIRS}
 )
 
 # ---- Link libraries ------------------------------------------------
 target_link_libraries(dms_app PRIVATE
     ${OpenCV_LIBS}
     Threads::Threads
-        "${ONNXRUNTIME_LIB_DIR}/onnxruntime.lib"
+    "${ONNXRUNTIME_LIB_DIR}/onnxruntime.lib"
     "${ONNXRUNTIME_LIB_DIR}/onnxruntime_providers_shared.lib"
 )
 
@@ -77,57 +79,44 @@ if(WIN32)
                 # Replace .lib with .dll (for MSVC import libs)
                 string(REPLACE ".lib" ".dll" _dll "${_imp}")
                 # Also handle the case where IMPORTED_LOCATION already is a dll
-                if(NOT _dll MATCHES "\\.dll$")
-                    set(_dll "")
+                if(EXISTS "${_dll}")
+                    list(APPEND _dll "")
+                elseif(EXISTS "${_imp}")
+                    set(_dll "${_imp}")
                 endif()
-                if(_dll AND EXISTS "${_dll}")
-                    list(APPEND _opencv_dlls "${_dll}")
+                if(EXISTS "${_dll}")
+                    add_custom_command(TARGET dms_app POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                                "${_dll}"
+                                "$<TARGET_FILE_DIR:dms_app>"
+                        COMMENT "Copying ${_dll} to output directory"
+                    )
                 endif()
             endif()
         endif()
     endforeach()
 
-    # Fallback: glob the OpenCV bin directory for all opencv_world*.dll
-    if(NOT _opencv_dlls)
-        get_filename_component(_ocv_lib_dir "${OpenCV_DIR}" ABSOLUTE)
-        # Common layout: OpenCVConfig.cmake is in <opencv_build>/  
-        # DLLs are in <opencv_build>/bin/ or x64/vc*/bin/
-        file(GLOB _opencv_dlls_glob
-            "${_ocv_lib_dir}/bin/*.dll"
-            "${_ocv_lib_dir}/x64/vc*/bin/*.dll"
-            "${_ocv_lib_dir}/../bin/*.dll"
-        )
-        list(APPEND _opencv_dlls ${_opencv_dlls_glob})
-    endif()
-
-    if(_opencv_dlls)
-        add_custom_command(TARGET dms_app POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E echo "[cmake] Copying OpenCV DLLs to EXE directory..."
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${_opencv_dlls}
-                "$<TARGET_FILE_DIR:dms_app>"
-            COMMENT "Copying OpenCV runtime DLLs next to dms_app.exe"
-        )
-    else()
-        message(WARNING
-            "[DMS] Could not locate OpenCV DLLs for auto-copy.\n"
-            "      After building, manually copy opencv_world*.dll from\n"
-            "      D:/opencv/build/x64/vc16/bin/  next to dms_app.exe,\n"
-            "      or add that directory to your PATH before running.")
-    endif()
-
-        # ---- Copy ONNX Runtime DLL next to EXE ---------------------------
+    # Copy ONNX Runtime DLL
     if(EXISTS "${ONNXRUNTIME_BIN_DIR}/onnxruntime.dll")
         add_custom_command(TARGET dms_app POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E echo "[cmake] Copying ONNX Runtime DLL to EXE directory..."
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${ONNXRUNTIME_BIN_DIR}/onnxruntime.dll"
-                "$<TARGET_FILE_DIR:dms_app>"
-            COMMENT "Copying ONNX Runtime DLL next to dms_app.exe"
+                    "${ONNXRUNTIME_BIN_DIR}/onnxruntime.dll"
+                    "$<TARGET_FILE_DIR:dms_app>"
+            COMMENT "Copying onnxruntime.dll to output directory"
         )
-    else()
-        message(WARNING
-            "[DMS] onnxruntime.dll not found at ${ONNXRUNTIME_BIN_DIR}\n"
-            "      The EXE will fail to run without this DLL.")
+    endif()
+
+    if(EXISTS "${ONNXRUNTIME_BIN_DIR}/onnxruntime_providers_shared.dll")
+        add_custom_command(TARGET dms_app POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${ONNXRUNTIME_BIN_DIR}/onnxruntime_providers_shared.dll"
+                    "$<TARGET_FILE_DIR:dms_app>"
+            COMMENT "Copying onnxruntime_providers_shared.dll to output directory"
+        )
     endif()
 endif()
+
+message(STATUS "[DMS] Configuration complete")
+message(STATUS "    OpenCV:        ${OpenCV_VERSION} (${OpenCV_INSTALL_PATH})")
+message(STATUS "    ONNX Runtime:  ${ONNXRUNTIME_ROOT}")
+message(STATUS "    Build output:  ${CMAKE_BINARY_DIR}/bin")
