@@ -84,23 +84,24 @@ std::vector<FaceDetection> OnnxFaceDetector::detect(const cv::Mat& frame) {
                 float width = data[2] / scaleX;
                 float height = data[3] / scaleY;
                 
-                // Convert center to top-left corner
-                float x = x_center - width / 2.0f;
-                float y = y_center - height / 2.0f;
-                    // Clamp to image boundaries
-                    x = std::max(0.0f, std::min(x, static_cast<float>(frame.cols - 1)));
-                    y = std::max(0.0f, std::min(y, static_cast<float>(frame.rows - 1)));
-                                            float w, h;
-                        w = std::min(width, static_cast<float>(frame.cols - x));
-                        h = std::min(height, static_cast<float>(frame.rows - y));
-                                            FaceDetection det;
-                    det.bbox = cv::Rect(static_cast<int>(x), static_cast<int>(y),
-                                      static_cast<int>(w), static_cast<int>(h));
-                    det.confidence = confidence;
-                    
-                    // Extract 5 landmarks (right eye, left eye, nose, right mouth, left mouth)
-                    for (int j = 0; j < 5; ++j) {
-                        float lx = data[5 + j * 2] / scaleX;
+                                        // YuNet outputs bbox in top-left format: [x, y, w, h] (already at input scale 640x640)
+                        // Scale back to original image size
+                        float x = data[0] / scaleX;
+                        float y = data[1] / scaleY;
+                        float width = data[2] / scaleX;
+                        float height = data[3] / scaleY;
+                        
+                        // Clamp to image boundaries
+                        x = std::max(0.0f, std::min(x, static_cast<float>(frame.cols - 1)));
+                        y = std::max(0.0f, std::min(y, static_cast<float>(frame.rows - 1)));
+                        float w = std::min(width, static_cast<float>(frame.cols - x));
+                        float h = std::min(height, static_cast<float>(frame.rows - y));
+                        
+                        FaceDetection det;
+                        det.bbox = cv::Rect(static_cast<int>(x), static_cast<int>(y),
+                                           static_cast<int>(w), static_cast<int>(h));
+                        det.confidence = confidence;
+        float lx = data[5 + j * 2] / scaleX;
                         float ly = data[6 + j * 2] / scaleY;
                         det.landmarks.push_back(cv::Point2f(lx, ly));
                     }
