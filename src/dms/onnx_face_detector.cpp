@@ -6,6 +6,7 @@
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 #include <iostream>
 
 namespace dms {
