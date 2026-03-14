@@ -64,12 +64,13 @@ int main(int argc, char* argv[]) {
             printUsage(argv[0]);
             return 0;
         }
-        modelPath = argv[1];
-        printf("[main] Using model from command line: %s\n", modelPath.c_str());
-    } else {
-        // Default model path (relative to build/bin/Release)
-        modelPath = "../../../models/face_detection_yunet_2023mar.onnx";
-        printf("[main] Using default model path: %s\n", modelPath.c_str());
+        if (std::string(argv[1]) == "--model" && argc > 2) {
+            modelPath = argv[2];
+            printf("[main] Using model from command line: %s\n", modelPath.c_str());
+        } else {
+            modelPath = argv[1];
+            printf("[main] Using model from command line: %s\n", modelPath.c_str());
+                 }
     }
     fflush(stdout);
 
