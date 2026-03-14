@@ -28,8 +28,8 @@ OnnxFaceDetector::OnnxFaceDetector(const std::string& modelPath, float confThres
         m_net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
         
         m_initialized = true;
-        printf("[OnnxFaceDetector] Initialized with model: %s (input: %dx%d)\n", 
-            modelPath.c_str(), m_inputWidth, m_inputHeight);
+        printf("[OnnxFaceDetector] Initialized with model: %s (input: %dx%d)\n",
+               modelPath.c_str(), m_inputWidth, m_inputHeight);
         
     } catch (const cv::Exception& e) {
         fprintf(stderr, "[OnnxFaceDetector] OpenCV DNN error: %s\n", e.what());
@@ -77,32 +77,30 @@ std::vector<FaceDetection> OnnxFaceDetector::detect(const cv::Mat& frame) {
                 
                 float confidence = data[4];
                 if (confidence > m_confThreshold) {
-                                    // Get bbox in center format [x_center, y_center, width, height]
-                // Convert to top-lek to original image size
-                        float x = data[0] / scaleX;
-                        float y = data[1] / scaleY;
-                        float width = data[2] / scaleX;
-                        float height = data[3] / scaleY;
-                        
-                        // Clamp to image boundaries
-                        x = std::max(0.0f, std::min(x, static_cast<float>(frame.cols - 1)));
-                        y = std::max(0.0f, std::min(y, static_cast<float>(frame.rows - 1)));
-                        float w = std::min(width, static_cast<float>(frame.cols - x));
-                        float h = std::min(height, static_cast<float>(frame.rows - y));
-                        
-                        FaceDetection det;
-                        det.bbox = cv::Rect(static_cast<int>(x), static_cast<int>(y),
-                                           static_cast<int>(w), static_cast<int>(h));
-                        det.confidence = confidence;
-        
-
-                        // Parse 5 landmarks (indices 5-14)
-                        for (int j = 0; j < 5; ++j) {
-                            float lx = data[5 + j * 2] / scaleX;
-                            float ly = data[6 + j * 2] / scaleY;
-                            det.landmarks.push_back(cv::Point2f(lx, ly));
-                        }
-            }
+                    // Get bbox in center format [x_center, y_center, width, height]
+                    // Convert to top-left to original image size
+                    float x = data[0] / scaleX;
+                    float y = data[1] / scaleY;
+                    float width = data[2] / scaleX;
+                    float height = data[3] / scaleY;
+                    
+                    // Clamp to image boundaries
+                    x = std::max(0.0f, std::min(x, static_cast<float>(frame.cols - 1)));
+                    y = std::max(0.0f, std::min(y, static_cast<float>(frame.rows - 1)));
+                    float w = std::min(width, static_cast<float>(frame.cols - x));
+                    float h = std::min(height, static_cast<float>(frame.rows - y));
+                    
+                    FaceDetection det;
+                    det.bbox = cv::Rect(static_cast<int>(x), static_cast<int>(y),
+                                       static_cast<int>(w), static_cast<int>(h));
+                    det.confidence = confidence;
+                    
+                    // Parse 5 landmarks (indices 5-14)
+                    for (int j = 0; j < 5; ++j) {
+                        float lx = data[5 + j * 2] / scaleX;
+                        float ly = data[6 + j * 2] / scaleY;
+                        det.landmarks.push_back(cv::Point2f(lx, ly));
+                    }
                     
                     detections.push_back(det);
                 }
@@ -115,7 +113,6 @@ std::vector<FaceDetection> OnnxFaceDetector::detect(const cv::Mat& frame) {
         for (int idx : indices) {
             result.push_back(detections[idx]);
         }
-        
         return result;
         
     } catch (const cv::Exception& e) {
@@ -124,42 +121,56 @@ std::vector<FaceDetection> OnnxFaceDetector::detect(const cv::Mat& frame) {
     }
 }
 
-float OnnxFaceDetector::computeIoU(const cv::Rect& a, const cv::Rect& b) {
-    int intersectionArea = (a & b).area();
-    int unionArea = a.area() + b.area() - intersectionArea;
-    return unionArea > 0 ? static_cast<float>(intersectionArea) / unionArea : 0.0f;
-}
-
-std::vector<int> OnnxFaceDetector::nonMaximumSuppression(const std::vector<FaceDetection>& boxes) {
-    std::vector<int> indices;
-    std::vector<std::pair<float, int>> scoreIndex;
+std::vector<int> OnnxFaceDetector::nonMaximumSuppression(const std::vector<FaceDetection>& detections) {
+    if (detections.empty()) return {};
     
-    for (size_t i = 0; i < boxes.size(); ++i) {
-        scoreIndex.push_back({boxes[i].confidence, static_cast<int>(i)});
+    std::vector<int> indices;
+    std::vector<float> scores;
+    std::vector<cv::Rect> boxes;
+    
+    for (const auto& det : detections) {
+        scores.push_back(det.confidence);
+        boxes.push_back(det.bbox);
     }
     
-    // Sort by confidence
-    std::sort(scoreIndex.begin(), scoreIndex.end(), 
-        [](const auto& a, const auto& b) { return a.first > b.first; });
+    // Sort by confidence (descending)
+    std::vector<int> sortedIndices(scores.size());
+    std::iota(sortedIndices.begin(), sortedIndices.end(), 0);
+    std::sort(sortedIndices.begin(), sortedIndices.end(),
+              [&scores](int i1, int i2) { return scores[i1] > scores[i2]; });
     
-    std::vector<bool> suppressed(boxes.size(), false);
+    std::vector<bool> suppressed(detections.size(), false);
     
-    for (const auto& [score, i] : scoreIndex) {
-        if (suppressed[i]) continue;
+    for (size_t i = 0; i < sortedIndices.size(); ++i) {
+        int idx = sortedIndices[i];
+        if (suppressed[idx]) continue;
         
-        indices.push_back(i);
+        indices.push_back(idx);
         
-        for (size_t j = 0; j < boxes.size(); ++j) {
-            if (suppressed[j] || i == static_cast<int>(j)) continue;
+        for (size_t j = i + 1; j < sortedIndices.size(); ++j) {
+            int jdx = sortedIndices[j];
+            if (suppressed[jdx]) continue;
             
-            float iou = computeIoU(boxes[i].bbox, boxes[j].bbox);
+            float iou = computeIoU(boxes[idx], boxes[jdx]);
             if (iou > m_iouThreshold) {
-                suppressed[j] = true;
+                suppressed[jdx] = true;
             }
         }
     }
     
     return indices;
+}
+
+float OnnxFaceDetector::computeIoU(const cv::Rect& a, const cv::Rect& b) {
+    int x1 = std::max(a.x, b.x);
+    int y1 = std::max(a.y, b.y);
+    int x2 = std::min(a.x + a.width, b.x + b.width);
+    int y2 = std::min(a.y + a.height, b.y + b.height);
+    
+    int intersectionArea = std::max(0, x2 - x1) * std::max(0, y2 - y1);
+    int unionArea = a.area() + b.area() - intersectionArea;
+    
+    return (unionArea > 0) ? static_cast<float>(intersectionArea) / unionArea : 0.0f;
 }
 
 } // namespace dms
